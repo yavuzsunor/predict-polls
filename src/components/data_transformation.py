@@ -3,82 +3,106 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+import torch
+from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 # from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer
 
-from src.components.data_ingestion import DataIngestion
 from src.exception import CustomException
 from src.logger import logging
-from src.utils import MakeTensor
-
-# Load pretrained tokenizer
-tokenizer = AutoTokenizer.from_pretrained("dbmdz/distilbert-base-turkish-cased")
 
 @dataclass
-class DataTransformation:
+class DataTransformationConfig:
+    # Load pretrained model/tokenizer
+    tokenizer = AutoTokenizer.from_pretrained("dbmdz/bert-base-turkish-cased")
 
-    path_train = 'artifacts/'
+class DataTransformation:
+    def __init__(self):
+        self.data_transformation_config = DataTransformationConfig() 
 
     def convert_df_clean_text(self, dataframe):
 
-        try:        
-            dataframe.rename(columns = {'Tip':'Label', 'Paylaşım':'Tweets'}, inplace=True)
-            dataframe['Label'] = dataframe['Label'].apply(lambda x: 1 if x == 'Pozitif' else 0)
+        try:
+            dataframe.rename(columns = {'Etiket':'Label'}, inplace=True)
+            dataframe['Label'] = np.where(dataframe['Label'] == 'kızgın', 0,
+                                        np.where(dataframe['Label'] == 'korku', 1,
+                                            np.where(dataframe['Label'] == 'mutlu', 2,
+                                                np.where(dataframe['Label'] == 'surpriz', 3, 4))))
             dataframe.dropna(inplace=True)
             dataframe.reset_index(drop=True, inplace=True)
             
-            texts = []
-            labels = []
-            for i in range(len(dataframe)):
-                texts.append(dataframe['Tweets'][i])
-                labels.append(dataframe['Label'][i])
+            # Get the lists of tweets and their labels.
+            tweets = dataframe.Tweet.values
+            labels = dataframe.Label.values
 
-            return texts, labels
+            return tweets, labels
         
         except Exception as e:
             raise CustomException(e, sys)
     
-    def build_encodings(self, text):
+    def build_encodings_split_train_test(self, tweets, labels):
         try:
-            encodings = tokenizer.batch_encode_plus(text,
-                                                    max_length=128, 
-                                                    add_special_tokens=True, 
-                                                    return_attention_mask=True, 
-                                                    pad_to_max_length=True, 
-                                                    truncation=True)
-            return encodings
+            # build indices using batch_encode_plus
+            indices=self.data_transformation_config.tokenizer.batch_encode_plus(list(tweets),
+                                                max_length=64,
+                                                add_special_tokens=True,
+                                                return_attention_mask=True,
+                                                pad_to_max_length=True,
+                                                truncation=True)
+            input_ids=indices["input_ids"]
+            attention_masks=indices["attention_mask"]
+            print(input_ids[0])
+            print(tweets[0])
+
+            # Use 80% for training and 20% for validation.
+            train_inputs, validation_inputs, train_labels, validation_labels = train_test_split(input_ids, 
+                                                                                                labels,
+                                                                                                random_state=42, 
+                                                                                                test_size=0.2)
+            train_masks, validation_masks, _, _ = train_test_split(attention_masks, 
+                                                                    labels,
+                                                                    random_state=42, 
+                                                                    test_size=0.2)
+
+            logging.info("Applying tokenization, encoding and splitting data to train and valiation")
+            return train_inputs, validation_inputs, train_labels, validation_labels, train_masks, validation_masks
 
         except Exception as e:
             raise CustomException(e, sys) 
 
-    def apply_data_transformation(self, train_path, val_path):
-
+    def convert_to_torch_apply_data_loader(self, 
+                                           train_inputs, 
+                                           validation_inputs,
+                                           train_labels,
+                                           validation_labels,
+                                           train_masks,
+                                           validation_masks
+                                           ):
         try:
-            train_df = pd.read_csv(train_path)
-            val_df = pd.read_csv(val_path)
-                          
-            train_texts, train_labels = self.convert_df_clean_text(train_df)
-            val_texts, val_labels = self.convert_df_clean_text(val_df)
-            logging.info("Read train and validation data completed")
-         
-            train_encodings = self.build_encodings(train_texts)
-            val_encodings = self.build_encodings(val_texts)
+            # Convert all of our data into torch tensors, the required datatype for our model
+            train_inputs = torch.tensor(train_inputs)
+            validation_inputs = torch.tensor(validation_inputs)
+            train_labels = torch.tensor(train_labels, dtype=torch.long)
+            validation_labels = torch.tensor(validation_labels, dtype=torch.long)
+            train_masks = torch.tensor(train_masks, dtype=torch.long)
+            validation_masks = torch.tensor(validation_masks, dtype=torch.long)
 
-            train_dataset = MakeTensor(train_encodings, train_labels)
-            val_dataset = MakeTensor(val_encodings, val_labels)
-            logging.info("Applying tokenization and tensor encoding")
+            batch_size = 32
+            # Create the DataLoader for our training set.
+            train_data = TensorDataset(train_inputs, train_masks, train_labels)
+            train_sampler = RandomSampler(train_data)
+            train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size)
+            # Create the DataLoader for our validation set.
+            validation_data = TensorDataset(validation_inputs, validation_masks, validation_labels)
+            validation_sampler = SequentialSampler(validation_data)
+            validation_dataloader = DataLoader(validation_data, sampler=validation_sampler, batch_size=batch_size)
 
-            print("input_ids dimensions", np.array(train_dataset.encodings['input_ids']).shape, '\n')
-            print("attention_mask dimensions", np.array(train_dataset.encodings['attention_mask']).shape, '\n')
-
-            return train_dataset, val_dataset
+            logging.info("Converting the encodings to torch tensors and creating dataloader")
+            return train_dataloader, validation_dataloader 
               
         except Exception as e:
             raise CustomException(e, sys)
-
-
-
-
 
 
 

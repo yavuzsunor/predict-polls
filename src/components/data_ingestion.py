@@ -1,3 +1,4 @@
+import boto3
 import os 
 import sys
 from dataclasses import dataclass
@@ -10,11 +11,17 @@ from src.logger import logging
 
 @dataclass
 class DataIngestionConfig:
+    """
+    This is currently redundant because we do not load any data from 'notebook' directory. 
+    """    
     train_data_path: str=os.path.join('artifacts/data', "train.csv")
     val_data_path: str=os.path.join('artifacts/data', "val.csv")
     raw_data_path: str=os.path.join('artifacts/data', "data.csv")
 
 class DataIngestion:
+    """
+    This is currently redundant because we do not load any data from 'notebook' directory. 
+    """
     def __init__(self):
         self.ingestion_config=DataIngestionConfig()
 

@@ -1,107 +1,242 @@
 import os
 import sys
+import random
+import time
 from dataclasses import dataclass
 
+import pandas as pd
 import numpy as np
-from transformers import AutoModel
-from torch.utils.data import DataLoader
+from transformers import  AutoModelForSequenceClassification, AdamW, AutoConfig, get_linear_schedule_with_warmup
 
-# import tensorflow as tf
-# from tensorflow.keras.layers import Input,concatenate,Dense
-# from tensorflow.keras.models import Model
-# from tensorflow.keras.optimizers import Adam
+import tensorflow as tf
+import torch
 
-from src.components.data_ingestion import DataIngestionConfig
-from src.components.data_transformation import DataTransformation
 from src.exception import CustomException
 from src.logger import logging
+from src.utils import find_device, flat_accuracy, format_time
 
-# Load pretrained model
-model = AutoModel.from_pretrained("dbmdz/distilbert-base-turkish-cased")  # .to("cuda") when GPU is accessable
+# Load BertForSequenceClassification, the pretrained BERT model with a single
+# linear classification layer on top.
+config = AutoConfig.from_pretrained("dbmdz/bert-base-turkish-cased", num_labels=5)
+model = AutoModelForSequenceClassification.from_pretrained("dbmdz/bert-base-turkish-cased", config=config)
+# model.cuda() # when GPU is accessable
+
+# assign GPU as device if available 
+device = find_device()
 
 @dataclass
 class ModelTrainerConfig:
-    model_data_path = 'artifacts/model'
+    raw_data_path = 'artifacts/data/tweets_multiple_label'
+    model_data_path = 'artifacts/model/BERT_multi_classifier/bert-classifier-turkish-sentiment'
 
-class TransfomerModelLoad:
-    def __init__(self):
-        self.model_trainer_config = ModelTrainerConfig()
-
-    def data_loader(self, train_set, val_set):
-        try:
-            # Load data in batches - CAN BE RUN training_pipeline
-            train_loader = DataLoader(train_set, batch_size=256, shuffle=False)
-            val_loader = DataLoader(val_set, batch_size=256, shuffle=False)
-
-            return train_loader, val_loader
-        
-        except Exception as e:
-            raise CustomException(e, sys)
-
-    # Get the last hidden state on top of the transformers model as the embeddings to use further in classification models 
-    def get_features(data_loader):
+@dataclass
+class ClassifierModelFinetune: 
+    def train_model(self, train_dataloader, validation_dataloader):
         try: 
-            for i, batch in enumerate(data_loader):
-                with torch.no_grad():
-                    input_ids = batch['input_ids'].to('cuda')
-                    attention_mask = batch['attention_mask'].to('cuda')          
-                    last_hidden_states = model(input_ids, attention_mask)
-                    cls_tokens = last_hidden_states[0][:,0,:].cpu().numpy()
-                    if i == 0:
-                        features = cls_tokens
-                    else:
-                        features = np.append(features, cls_tokens, axis=0)
+            # Note: AdamW is a class from the huggingface library (as opposed to pytorch)
+            # 'W' stands for 'Weight Decay fix"
+            optimizer = AdamW(model.parameters(),
+                              lr = 2e-5, # args.learning_rate - default is 5e-5
+                              betas=[0.9,0.999],
+                              eps = 1e-6 # args.adam_epsilon  - default is 1e-8.
+                            )
 
-            return features
+            # Number of training epochs
+            epochs = 5
+
+            # Total number of training steps is number of batches * number of epochs.
+            total_steps = len(train_dataloader) * epochs
+
+            # Create the learning rate scheduler.
+            scheduler = get_linear_schedule_with_warmup(optimizer,
+                                            num_warmup_steps = 0, # Default value in run_glue.py
+                                            num_training_steps = total_steps)
+
+            
+            # Training loop
+            # This training code is based on the `run_glue.py` script here:
+            # https://github.com/huggingface/transformers/blob/5bfcd0485ece086ebcbed2d008813037968a9e58/examples/run_glue.py#L128
+
+
+            # Set the seed value all over the place to make this reproducible.
+            seed_val = 42
+
+            random.seed(seed_val)
+            np.random.seed(seed_val)
+            torch.manual_seed(seed_val)
+            torch.cuda.manual_seed_all(seed_val)
+
+            # Store the average loss after each epoch so we can plot them.
+            loss_values = []
+
+            # For each epoch...
+            logging.info("Starting model training...")
+            for epoch_i in range(0, epochs):
+
+                # ========================================
+                #               Training
+                # ========================================
+
+                # Perform one full pass over the training set.
+
+                print("")
+                print('======== Epoch {:} / {:} ========'.format(epoch_i + 1, epochs))
+                print('Training...')
+
+                # Measure how long the training epoch takes.
+                t0 = time.time()
+
+                # Reset the total loss for this epoch.
+                total_loss = 0
+
+                # Put the model into training mode. Don't be mislead--the call to
+                # `train` just changes the *mode*, it doesn't *perform* the training.
+                # `dropout` and `batchnorm` layers behave differently during training
+                # vs. test (source: https://stackoverflow.com/questions/51433378/what-does-model-train-do-in-pytorch)
+                model.train()
+
+                # For each batch of training data...
+                for step, batch in enumerate(train_dataloader):
+
+                    # Progress update every 30 batches.
+                    if step % 30 == 0 and not step == 0:
+                        # Calculate elapsed time in minutes.
+                        elapsed = format_time(time.time() - t0)
+
+                        # Report progress.
+                        print('  Batch {:>5,}  of  {:>5,}.    Elapsed: {:}.'.format(step, len(train_dataloader), elapsed))
+
+                    # Unpack this training batch from our dataloader.
+                    #
+                    # As we unpack the batch, we'll also copy each tensor to the GPU using the
+                    # `to` method.
+                    #
+                    # `batch` contains three pytorch tensors:
+                    #   [0]: input ids
+                    #   [1]: attention masks
+                    #   [2]: labels
+                    b_input_ids = batch[0].to(device)
+                    b_input_mask = batch[1].to(device)
+                    b_labels = batch[2].to(device)
+
+                    # Always clear any previously calculated gradients before performing a
+                    # backward pass. PyTorch doesn't do this automatically because
+                    # accumulating the gradients is "convenient while training RNNs".
+                    # (source: https://stackoverflow.com/questions/48001598/why-do-we-need-to-call-zero-grad-in-pytorch)
+                    model.zero_grad()
+
+                    # Perform a forward pass (evaluate the model on this training batch).
+                    # This will return the loss (rather than the model output) because we
+                    # have provided the `labels`.
+                    # The documentation for this `model` function is here:
+                    # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
+                    outputs = model(b_input_ids,
+                                    attention_mask=b_input_mask,
+                                    labels=b_labels)
+
+                    # The call to `model` always returns a tuple, so we need to pull the
+                    # loss value out of the tuple.
+                    loss = outputs[0]
+
+                    # Accumulate the training loss over all of the batches so that we can
+                    # calculate the average loss at the end. `loss` is a Tensor containing a
+                    # single value; the `.item()` function just returns the Python value
+                    # from the tensor.
+                    total_loss += loss.item()
+
+                    # Perform a backward pass to calculate the gradients.
+                    loss.backward()
+
+                    # Clip the norm of the gradients to 1.0.
+                    # This is to help prevent the "exploding gradients" problem.
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+                    # Update parameters and take a step using the computed gradient.
+                    # The optimizer dictates the "update rule"--how the parameters are
+                    # modified based on their gradients, the learning rate, etc.
+                    optimizer.step()
+
+                    # Update the learning rate.
+                    scheduler.step()
+
+                # Calculate the average loss over the training data.
+                avg_train_loss = total_loss / len(train_dataloader)
+
+                # Store the loss value for plotting the learning curve.
+                loss_values.append(avg_train_loss)
+
+                print("")
+                print("  Average training loss: {0:.2f}".format(avg_train_loss))
+                print("  Training epoch took: {:}".format(format_time(time.time() - t0)))
+
+                # ========================================
+                #               Validation
+                # ========================================
+                # After the completion of each training epoch, measure our performance on
+                # our validation set.
+
+                print("")
+                print("Running Validation...")
+
+                t0 = time.time()
+
+                # Put the model in evaluation mode--the dropout layers behave differently
+                # during evaluation.
+                model.eval()
+
+                # Tracking variables
+                eval_loss, eval_accuracy = 0, 0
+                nb_eval_steps, nb_eval_examples = 0, 0
+
+                # Evaluate data for one epoch
+                for batch in validation_dataloader:
+
+                    # Add batch to GPU
+                    batch = tuple(t.to(device) for t in batch)
+
+                    # Unpack the inputs from our dataloader
+                    b_input_ids, b_input_mask, b_labels = batch
+
+                    # Telling the model not to compute or store gradients, saving memory and
+                    # speeding up validation
+                    with torch.no_grad():
+
+                        # Forward pass, calculate logit predictions.
+                        # This will return the logits rather than the loss because we have
+                        # not provided labels.
+                        # token_type_ids is the same as the "segment ids", which
+                        # differentiates sentence 1 and 2 in 2-sentence tasks.
+                        # The documentation for this `model` function is here:
+                        # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
+                        outputs = model(b_input_ids,
+                                        attention_mask=b_input_mask,
+                                        )
+
+                    # Get the "logits" output by the model. The "logits" are the output
+                    # values prior to applying an activation function like the softmax.
+                    logits = outputs[0]
+
+                    # Move logits and labels to CPU
+                    logits = logits.detach().cpu().numpy()
+                    label_ids = b_labels.to('cpu').numpy()
+
+                    # Calculate the accuracy for this batch of test sentences.
+                    tmp_eval_accuracy = flat_accuracy(logits, label_ids)
+
+                    # Accumulate the total accuracy.
+                    eval_accuracy += tmp_eval_accuracy
+
+                    # Track the number of batches
+                    nb_eval_steps += 1
+
+                # Report the final accuracy for this validation run.
+                print("  Accuracy: {0:.2f}".format(eval_accuracy/nb_eval_steps))
+                print("  Validation took: {:}".format(format_time(time.time() - t0)))
+
+            print("")
+            print("Training complete!")
+            logging.info("Finished model training")
+            return model
 
         except Exception as e:
             raise CustomException(e, sys)
-
-# class DownstreamModelTrainer:
-
-#     # Train a classification model Neural Network on top of the last hidden state in the Transfomers model
-#     def train_NN_Classifier(features_tr, train_labels, features_vl, val_labels):
-
-#         input1 = Input(shape=(features_tr.shape[1],))
-#         dense1 = Dense(128,activation='relu')(input1)
-#         dense2 = Dense(1,activation='sigmoid')(dense1)
-#         tfmodel = Model(inputs=input1,outputs=dense2)  
-
-#         loss = tf.keras.losses.BinaryCrossentropy (from_logits=False)
-
-#         lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
-#             initial_learning_rate=1e-3,
-#             decay_steps=1000,
-#             decay_rate=1e-3/32)
-#         optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
-#         tfmodel.compile(optimizer=optimizer, loss=[loss, loss],metrics=["accuracy"])
-
-#         checkpoint = tf.keras.callbacks.ModelCheckpoint('model.h5', monitor='val_accuracy', save_best_only=True)
-#         earlystopping = tf.keras.callbacks.EarlyStopping(monitor='val_accuracy')
-
-#         fine_history = tfmodel.fit(features_tr, np.array(train_labels), validation_data=(features_vl, np.array(val_labels)),
-#                                 epochs=10, callbacks=[checkpoint, earlystopping],batch_size=32,verbose=1)
-
-if __name__ == "__main__":
-    data_ingestion_config = DataIngestionConfig()
-    train_data_path, val_data_path = data_ingestion_config.train_data_path, data_ingestion_config.val_data_path   
-    
-    data_transformation = DataTransformation()
-    train_dataset, val_dataset = data_transformation.apply_data_transformation(train_data_path, val_data_path)
-
-    model_trainer_config = ModelTrainerConfig()
-    transfomer_model_load = TransfomerModelLoad()
-    train_loader, val_loader = transfomer_model_load.data_loader(train_dataset, val_dataset)
-
-    # # Get the last hidden state(features to fine-tune) and save them as numpy array - DONOT run without GPU
-    # features_tr = transfomer_model_load.get_features(train_loader)
-    # features_vl = transfomer_model_load.get_features(val_loader)   
-    # np.save("train_BERT_last_hidden_states", features_tr)
-    # np.save("val_BERT_last_hidden_states", features_vl)
-
-    # Load the saved last hidden state(features to fine-tine) from artifacts
-    features_tr = np.load(model_trainer_config.model_data_path + '/train_BERT_last_hidden_states.npy')
-    features_vl = np.load(model_trainer_config.model_data_path + '/val_BERT_last_hidden_states.npy')
-
-    print("train features shape", features_tr.shape)
-    print("val features shape", features_vl.shape)

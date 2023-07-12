@@ -1,3 +1,4 @@
+boto3
 pandas
 numpy
 seaborn
@@ -6,4 +7,10 @@ scikit-learn
 transformers
 torch
 dill
-# -e .
+tensorflow
+openpyxl
+zemberek-python
+snscrape
+eksipy
+asyncio
+-e .
