@@ -13,4 +13,5 @@ zemberek-python
 snscrape
 eksipy
 asyncio
+flask
 -e .
