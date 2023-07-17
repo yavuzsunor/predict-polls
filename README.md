@@ -1,20 +1,20 @@
-# Public Opinion Measure(Polling) using online media
+# Public Opinion Measure(Polling) using online media with fine-tuning BERT model
 Public opinion measuring(polling) has been a helpful tool for decision makers within many areas from politics to sports. The latest shift in the mediums people expressing their opinions and the latest advances in large language models with the use of transformer architecture have made it possible to come up with more accurate and fast public opinion measuring techniques with the help of web scraping and fine-tuning LLM's. 
 
 ## The problem set and proposed solution
 ### The problem set 
-The project has been stemmed from the inaccurate pollings made by all of the polling organizations in Turkey for the last parliment and presidential election. The exploratatory research showed that the current methodologies and tools used in opinion polling not only in Turkey but overall in many countries nowadays mostly fail to predict the result of the election - sometimes by large margins. 
+The project has been stemmed from the inaccurate pollings made by all of the polling organizations in Turkey for the last parliamentary and presidential election. The exploratory research showed that the current methodologies and tools used in opinion polling not only in Turkey but overall in many countries nowadays mostly fail to predict the result of the elections - sometimes by large margins. 
 
 The idea that has been tested in this project is to scrape real-time online media posts(twitter, threads, reddit, eksisozluk(reddit-like collaborative hypertext dictionary in Turkish) to apply sentiment analysis using large language models(LLM) for certain public/political figures. 
-For the 1st phase of this project, only Eksisozluk entries has been scraped and used due to the recent challenges with the Twitter API.   
+For the 1st phase of this project, only Eksisozluk entries have been scraped and used due to the recent challenges with the Twitter API.   
 
 ### The proposed Solution
-The recent research in fine-tuning and prompt engineering with the help of open-source developments have made it possible to fine-tune foundational models for downstream tasks. Here, two different 
+The recent research in fine-tuning and prompt engineering with the help of open-source developments have made it possible to fine-tune foundational models for downstream tasks. Here, two different methodologies have been studied and tested at real-time inference.  
 
 ### Experiments 
 Two fine-tunings methodologies have been tested and compared for the 1st phase. 
 
-1- Use the pre-trained DistilBERT model without applying any fine-tuning to fetch the last hidden states - embeddings - from the top layer and train a custom NN classifier using those embeddigns as the feature set:   
+1- Using the pre-trained DistilBERT model without applying any fine-tuning to fetch the last hidden states - embeddings - from the top layer and train a custom NN classifier using those embeddings as the feature set:   
 
 ```python
 model = AutoModel.from_pretrained("dbmdz/distilbert-base-turkish-cased").to("cuda")
@@ -42,7 +42,7 @@ dense2 = Dense(1,activation='sigmoid')(dense1)
 tfmodel = Model(inputs=input1,outputs=dense2)
 ```
 
-2- Use the BERT Classifier model to fine-tune the model weights using a custom multi-labeled data to train a multiclassfier for the downstream task
+2- Using the BERT Classifier model to fine-tune the model weights using a custom multi-labeled data to train a multiclassifier for the downstream task:
 
 ```python
 sentiment_dict = {"kızgın":0,  # angry
@@ -79,7 +79,7 @@ model = AutoModelForSequenceClassification.from_pretrained(
 ```
 
 ### Results
-Although the first method is used for a more generic sentiment classification(positive vs negative), it has been qucikly dismissed due to its poor performance comparing the second method that has used the BERTClassifier model for a multi-class downstream task fien-tuning its weigths for the custom sentiment data.
+Although the first method is used for a more generic sentiment classification(positive vs negative), it has been quickly dismissed due to its poor performance comparing the second method that has used the BERTClassifier model for a multi-class downstream task fine-tuning its weigths for the custom sentiment data.
 
 
 The accuracy reached with training a downstream classifier model on top of the last hidden states of DistilBERT:   
@@ -104,7 +104,7 @@ Running Validation...
 ```
 
 ## Inference  
-To test the model, the recent public opinion measured for two public figures, a Turkish soccer prodigy "Arda Guler" who just made a sensational transfer to Real Madrid and the opposition party leader "Kemal Kilicdaroglu" who just lost the presedential election a month ago. As can be seen from the below results, Arda Guler has had mainly a positive sentiment in the public with some mixed surprised and angry feelings - most likely due to the excitement and disappointment of his former club's fans - and Kemal Kilicdaroglu had caused mostly anger and sadness in the public especially within the voters who had been dissapointed with his performance in the last eletion.       
+To test the model, the recent public opinion was measured for two public figures, a Turkish soccer prodigy "Arda Guler" who just made a sensational transfer to Real Madrid and the opposition party leader "Kemal Kilicdaroglu" who just lost the presidential election a month ago. As can be seen from the below results, Arda Guler has had mainly a positive sentiment in the public with some mixed surprising and angry feelings - most likely due to the excitement and disappointment of his former club's fans - and Kemal Kilicdaroglu had caused mostly anger and sadness in the public especially within the voters who had been dissapointed with his performance in the last election.       
 
 
 json payload for Arda Guler's public sentiment:
