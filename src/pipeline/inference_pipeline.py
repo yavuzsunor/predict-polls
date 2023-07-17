@@ -60,7 +60,7 @@ class Inference:
             async def getTopic():
                 eksi = eksipy.Eksi()
                 topic = await eksi.getTopic(search_topic)
-                for page in range(810, 813):
+                for page in range(6186, 6190):
                     entrys = await topic.getEntrys(page=page)
                     for entry in entrys:
                         # print("*" * 10)
@@ -142,5 +142,5 @@ class Inference:
 if __name__ == "__main__":
 
     inference = Inference() 
-    response_json = inference.predict_at_inference("mauro icardi")
+    response_json = inference.predict_at_inference("kemal kılıçdaroğlu")
     print(response_json)

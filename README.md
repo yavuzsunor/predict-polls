@@ -14,12 +14,13 @@ The recent research in fine-tuning and prompt engineering with the help of open-
 ### Experiments 
 Two fine-tunings methodologies have been tested and compared for the 1st phase. 
 
-1- Pre-trained DistilBERT model has been loaded without applying any fine-tuning...
+1- Use the pre-trained DistilBERT model without applying any fine-tuning to fetch the last hidden states - embeddings - from the top layer and train a custom NN classifier using those embeddigns as the feature set:   
 
 ```python
 model = AutoModel.from_pretrained("dbmdz/distilbert-base-turkish-cased").to("cuda")
 tokenizer = AutoTokenizer.from_pretrained("dbmdz/distilbert-base-turkish-cased")
-
+```
+```python
 def get_features(data_loader):
   for i, batch in enumerate(data_loader):
     with torch.no_grad():
@@ -33,14 +34,49 @@ def get_features(data_loader):
         features = np.append(features, cls_tokens, axis=0)
 
   return features
-
+```
+```python
 input1 = Input(shape=(features_tr.shape[1],))
 dense1 = Dense(128,activation='relu')(input1)
 dense2 = Dense(1,activation='sigmoid')(dense1)
 tfmodel = Model(inputs=input1,outputs=dense2)
 ```
-2- BERT Classifier model has been fine-tuned .....
 
+2- Use the BERT Classifier model to fine-tune the model weights using a custom multi-labeled data to train a multiclassfier for the downstream task
+
+```python
+sentiment_dict = {"kızgın":0,  # angry
+                  "korku":1,   # feared/threatened
+                  "mutlu":2,   # happy
+                  "surpriz":3, # surprised
+                  "üzgün":4}.  # sad
+plot_grams(process_text(dataset_tweets, label=2, gram='bi'), sentiment='mutlu')
+```
+![alt text](/images/bigrams_mutlu.png)
+
+```python
+tokenizer = AutoTokenizer.from_pretrained("dbmdz/bert-base-turkish-cased")
+```
+- > site ne zaman çalıştıda ürün stokları bitti diyor mal mısınız oğlum kimi kandırıyorsunuz!
+    ```python
+    Tokenized:  ['site', 'ne', 'zaman', 'çalıştı', '##da', 'ürün', 'stok', '##ları', 'bitti', 'diyor', 'mal', 'mısınız', 'oğlum', 'kimi', 'kandır', '##ıyorsunuz', '!']
+    Token IDs:  [6521, 2142, 2248, 9879, 1986, 2782, 10992, 2037, 10638, 4022, 2810, 12760, 9747, 7470, 13413, 16566, 5]
+    ```
+- > Sebebi neydi ki diye bağıracağım şimdi az kaldı
+    ```python
+    Tokenized:  ['Seb', '##ebi', 'neydi', 'ki', 'diye', 'bağır', '##acağım', 'şimdi', 'az', 'kaldı']
+    Token IDs:  [9985, 9254, 21074, 2402, 2636, 7355, 6950, 3653, 2539, 5234]
+    ```
+
+```python
+from transformers import AutoModelForSequenceClassification, AdamW, AutoConfig
+config = AutoConfig.from_pretrained(
+        "dbmdz/bert-base-turkish-cased",num_labels=5)
+# Load BertForSequenceClassification, the pretrained BERT model with a single
+# linear classification layer on top.
+model = AutoModelForSequenceClassification.from_pretrained(
+    "dbmdz/bert-base-turkish-cased",config=config)
+```
 
 ### Results
 Although the first method is used for a more generic sentiment classification(positive vs negative), it has been qucikly dismissed due to its poor performance comparing the second method that has used the BERTClassifier model for a multi-class downstream task fien-tuning its weigths for the custom sentiment data.
@@ -48,47 +84,15 @@ Although the first method is used for a more generic sentiment classification(po
 
 The accuracy reached with training a downstream classifier model on top of the last hidden states of DistilBERT:   
 ```
-Epoch 1/10
-226/226 [==============================] - 4s 10ms/step - loss: 0.5877 - accuracy: 0.6911 - val_loss: 0.5655 - val_accuracy: 0.7325
-Epoch 2/10
-226/226 [==============================] - 3s 11ms/step - loss: 0.5568 - accuracy: 0.7318 - val_loss: 0.5619 - val_accuracy: 0.7371
+...
+
 Epoch 3/10
 226/226 [==============================] - 2s 10ms/step - loss: 0.5549 - accuracy: 0.7333 - val_loss: 0.5608 - val_accuracy: 0.7332
 ```
 
 The accuracy reached with fine-tuning BERT Classifier weights with the custom data for multi-class sentiment analysis:
 ```
-======== Epoch 1 / 5 ========
-Training...
-  Average training loss: 1.34
-  Training epoch took: 0:00:35
-Running Validation...
-  Accuracy: 0.93
-  Validation took: 0:00:03
-
-======== Epoch 2 / 5 ========
-Training...
-  Average training loss: 0.17
-  Training epoch took: 0:00:32
-Running Validation...
-  Accuracy: 0.99
-  Validation took: 0:00:03
-
-======== Epoch 3 / 5 ========
-Training...
-  Average training loss: 0.03
-  Training epoch took: 0:00:32
-Running Validation...
-  Accuracy: 0.99
-  Validation took: 0:00:03
-  
-======== Epoch 4 / 5 ========
-Training...
-  Average training loss: 0.01
-  Training epoch took: 0:00:32
-Running Validation...
-  Accuracy: 0.99
-  Validation took: 0:00:03
+...
 
 ======== Epoch 5 / 5 ========
 Training...
@@ -100,8 +104,29 @@ Running Validation...
 ```
 
 ## Inference  
-...
+To test the model, the recent public opinion measured for two public figures, a Turkish soccer prodigy "Arda Guler" who just made a sensational transfer to Real Madrid and the opposition party leader "Kemal Kilicdaroglu" who just lost the presedential election a month ago. As can be seen from the below results, Arda Guler has had mainly a positive sentiment in the public with some mixed surprised and angry feelings - most likely due to the excitement and disappointment of his former club's fans - and Kemal Kilicdaroglu had caused mostly anger and sadness in the public especially within the voters who had been dissapointed with his performance in the last eletion.       
 
+
+json payload for Arda Guler's public sentiment:
+```json
+{'angry': 0.27, 
+ 'scared': 0.03, 
+ 'happy': 0.53, 
+ 'surprised': 0.13, 
+ 'sad': 0.03}
+```
+
+json payload for Kemal Kilicdaroglu's public sentiment:
+```json
+{'angry': 0.45, 
+ 'scared': 0.05, 
+ 'happy': 0.15, 
+ 'surprised': 0.20, 
+ 'sad': 0.15}
+```
+
+The fine-tuned model can also be tested and downloaded at the follwing Hugginfgace repo:
+https://huggingface.co/sunor/bert-classifier-turkish-sentiment
 
 ## The repo structure
 ```
