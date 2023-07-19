@@ -1,20 +1,23 @@
 <html>
 <body>
     <div class="login">
-       <h1>Athlete Rating Measure</h1>
+       <h1>Public Figure Opinion Measure</h1>
    
        <form action="{{ url_for('predict_datapoint')}}" method="post">
         <h1>
-            <legend>Select the Athlete</legend>
+            <legend>Select the Public figure</legend>
         </h1>
         <div class="mb-3">
-            <label class="form-label">Athlete</label>
-            <select class="form-control" name="athlete" placeholder="Enter the name of the athlete" required>
+            <label class="form-label">Figure</label>
+            <select class="form-control" name="figure" placeholder="Enter the name of the public figure" required>
                 <option class="placeholder" selected disabled value="">Select the athlete</option>
-                <option value="arda guler">
-                    kilicdaroglu
+                <option value="arda güler">
+                    arda güler
                 </option>
             </select>
+        </div>
+        <div class="mb-3">
+            <input class="btn btn-primary" type="submit" value="Predict the public opinion" required />
         </div>
     </form>
     <h2>
@@ -22,3 +25,4 @@
     </h2>
    <body>
 </html>
+

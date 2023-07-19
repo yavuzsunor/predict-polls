@@ -1,6 +1,8 @@
 import sys
 import os
+import glob
 import numpy as np
+import json
 
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
@@ -60,16 +62,25 @@ class Inference:
             async def getTopic():
                 eksi = eksipy.Eksi()
                 topic = await eksi.getTopic(search_topic)
-                for page in range(6186, 6190):
+                for page in range(1378, 1382):
                     entrys = await topic.getEntrys(page=page)
+                    temp_list = []
                     for entry in entrys:
                         # print("*" * 10)
                         # print(entry.text())
+                        temp_list.append(entry.text())
                         entry_list.append(entry.text())
                 #         print(entry.author.nick)
                 #         print(entry.date)
 
                     # print("*" * 10)
+
+                    # Open a file in write mode.
+                    with open("artifacts/data/arda_guler_entries/page_"+str(page)+".json", "w") as f:
+                        # Use the `json.dump()` function to dump the list of texts to the file.
+                        json.dump(temp_list, f, ensure_ascii=False)
+                    # Close the file.
+                    f.close() 
 
             loop = asyncio.get_event_loop()
             loop.run_until_complete(getTopic())
@@ -103,9 +114,17 @@ class Inference:
         except Exception as e:
             raise CustomException(e, sys)
     
-    def predict_at_inference(self, search_topic=None):
+    def predict_at_inference(self, search_topic="arda güler"):
         try:
-            eksi_entries = self.scrape_eksisozluk(search_topic)
+            # eksi_entries = self.scrape_eksisozluk(search_topic)
+
+            json_files = glob.glob(os.path.join('artifacts/data/arda_guler_entries/', '*.json'))
+            # loop over the list of json files 
+            eksi_entries = []
+            for i, f in enumerate(json_files):
+                # read the json file
+                eksi_entries.extend(json.load(open(f)))            
+            
             clean_eksi_entries = []
             for entry in eksi_entries:
                 clean_entry = normalizer.normalize(clean_text(entry))
@@ -139,8 +158,16 @@ class Inference:
         except Exception as e:
             raise CustomException(e, sys)
 
-if __name__ == "__main__":
+class CustomData:
+    def __init__(
+        self,
+        athlete: str, 
+    ):
+        self.athlete = athlete
 
-    inference = Inference() 
-    response_json = inference.predict_at_inference("kemal kılıçdaroğlu")
-    print(response_json)
+
+# if __name__ == "__main__":
+
+#     inference = Inference() 
+#     response_json = inference.predict_at_inference()
+#     print(response_json)
